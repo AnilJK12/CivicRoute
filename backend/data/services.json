@@ -1,0 +1,9 @@
+{
+  "_metadata": {
+    "kind": "development_fixture",
+    "verified": false,
+    "notice": "No verified service data supplied. Trusted services and unreviewed discoveries are separate; both are empty."
+  },
+  "services": [],
+  "discoveries": []
+}

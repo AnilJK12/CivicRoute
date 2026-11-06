@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "discoveries": [
+    {
+      "discovery_id": "1b9dd5f4aedf49d681cb8ddb144ce589",
+      "title": "Synthetic official-source result",
+      "url": "https://official.example.test/guide",
+      "retrieved_at": "2026-10-30T10:15:00Z",
+      "jurisdiction": "Synthetic test jurisdiction",
+      "excerpt": "Synthetic excerpt for adapter testing.",
+      "verification_status": "unverified",
+      "review_state": "pending_review",
+      "review_notes": null,
+      "reviewed_at": null,
+      "claim_key": "sample_claim",
+      "conflicts_with": []
+    }
+  ]
+}

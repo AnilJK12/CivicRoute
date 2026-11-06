@@ -1,0 +1,258 @@
+CIVICROUTE PROJECT HANDOFF
+Updated: 2026-10-30 (Asia/Calcutta)
+
+PURPOSE
+-------
+CivicRoute is a Karnataka public-service navigator. The backend identifies a
+requested government service, uses trusted/reviewed data as the authority,
+explains steps in plain language, and can locate explicitly authorized service
+centres. The catalogue is intended to expand by data, across departments and
+public-service categories. Do not interpret the current sample journey IDs as
+the complete product scope.
+
+CURRENT WORKING DIRECTORIES
+===========================
+Backend project/repository working root:
+  C:\Users\anilj\Documents\Codex\2026-10-29\h
+
+Backend Python package:
+  C:\Users\anilj\Documents\Codex\2026-10-29\h\backend
+
+Frontend project root (separate folder):
+  C:\Users\anilj\Downloads\CivicRoute_Frontend\frontend
+
+Run backend commands from the backend project/repository working root. Run npm
+commands from the frontend project root. The frontend code is outside the
+backend working root. The backend workspace inspection reported no Git
+metadata at the working root, so a Git diff/status could not be used there.
+
+CURRENT STRUCTURE (IMPORTANT FILES)
+===================================
+Backend working root:
+  app.py                         Legacy/compatibility FastAPI entry; retained.
+  services.json                  Legacy root catalog; retained.
+  requirements.txt               Python dependencies.
+  README.md                      Backend setup/API/design documentation.
+  .gitignore                     Ignores .env, .env.* and local Python/test artifacts.
+  .env.example                   Environment variable names/placeholders only.
+  working-Backend.txt            Detailed backend progress log; chronological history.
+  CivicRoute-Handoff.txt         This handoff summary.
+
+backend/:
+  main.py                        Current FastAPI app: /health, /ask, /centres and CORS.
+  schemas.py                     Pydantic request and response contracts.
+  config.py                      Environment settings and project-root .env loading.
+  pipeline.py                    Classification, clarification, retrieval and guidance flow.
+  knowledge_base.py              Trusted service models and catalogue loading.
+  llm.py                         Isolated optional Gemini integration.
+  official_sources.py            Official-source candidate/retrieval provider interface.
+  discovery_store.py             Separate persisted review queue for untrusted discoveries.
+  data_ingestion.py              Version-1 JSON bundle validation and staging/reporting.
+  catalog_promotion.py           Explicitly approved, atomic trusted-catalog promotion.
+  centres.py                     Verified centre filtering and distance ordering.
+  provider_matching.py           Provider/centre matching boundary.
+  http_errors.py, url_validation.py
+  data/services.json             Trusted service catalogue plus separately stored centres;
+                                 currently empty/unverified development catalog.
+  data/discoveries.json          Separate discovery/review data; never automatically trusted.
+  tests/                         Backend pytest suite; synthetic fixtures are temporary.
+
+Frontend project:
+  src/routes/index.tsx            Existing CivicRoute page, /ask and Find Nearby Centres UI.
+  src/components/NearbyCentresMap.tsx
+                                  Lazy Google Maps UI and GET /centres integration.
+  package.json/package-lock.json  Vite/React/TypeScript scripts and dependencies.
+  .env.example                    Frontend environment variable template.
+  .gitignore                      Ignores .env and .env.* including local environment files.
+
+Never read or copy .env or .env.local values into a handoff, logs, source,
+README, tests, or chat. The frontend's .env.local and the backend root .env are
+local configuration files; this handoff intentionally records names only.
+
+API CONTRACTS AND INTEGRATION
+============================
+GET /health
+  Returns a minimal status object: {"status":"ok"}. It does not expose config,
+  local paths, prompts or credentials.
+
+POST /ask request
+  {"question":"I need an income certificate","language":"en"}
+  Supported fields are question (nonblank, max 2,000 chars) and language
+  ("en" or "kn", default "en"). Extra request fields are rejected. The
+  frontend /ask payload remains question + language; do not add location to
+  that request without a separately agreed contract change.
+
+POST /ask response
+  The current contract supports an "ok" response with service_id,
+  service_name, language, steps, structured documents, fee, online_option,
+  office_type, grievance, sources, last_verified and warnings. Unsupported
+  responses have status="unsupported", service_id="unknown", service_name=null,
+  message, official_portal_url (only if verified/configured),
+  suggested_services and warnings. A clarification_needed response is also
+  supported by the existing frontend. See backend/schemas.py and README.md for
+  exact current models. Do not change /ask while integrating centres.
+
+GET /centres (added 2026-10-30)
+  Query: service_id (required); district, taluk, or area (optional); latitude
+  and longitude (optional but must be paired); max_results (1..50, default 20).
+  The frontend uses the existing district-or-taluk input as `area`. It asks
+  browser geolocation only after the user selects “Use my location to show
+  distance”. Response:
+  {"service_id":"...","centres":[{"id":null,"name":"...",
+  "centre_type":"...","address":"...","district":"...","taluk":"...",
+  "latitude":null,"longitude":null,"service_capabilities":[...],
+  "sources":[...],"last_verified":"YYYY-MM-DD","distance_km":null}]}
+  Exact optional values depend on the promoted record. The route returns only
+  known trusted service IDs and centres whose status is verified, verification
+  date is not future/older than 365 days, dated source provenance exists, and
+  requested-service capability is explicitly verified and has source URLs.
+  Nearby status never implies authorization. Centres lacking coordinates may
+  be included without distance unless coordinates were requested for distance
+  ordering. Invalid service IDs are rejected; unlisted service IDs return 404.
+
+The map component loads Google Maps only when the existing Find Nearby Centres
+button reveals it. Markers are created only from /centres results with
+coordinates; details include the centre and source/verification information.
+The existing VITE_GOOGLE_MAPS_API_KEY remains frontend/browser configuration
+only. Do not add backend Gemini or search keys to frontend environment.
+
+TRUST, SECURITY, AND PRODUCT DECISIONS
+======================================
+- Trusted bundled service data is authoritative. The LLM can classify or
+  rephrase verified steps only; Python/Pydantic validate model output.
+- The deterministic intent classifier remains the fallback when Gemini is
+  absent or fails. Accepted IDs currently include aadhaar_update,
+  income_certificate, civic_complaint, with unknown for out-of-scope/unclear
+  requests. Catalogue records and aliases are data-driven and expandable.
+- Missing/unverified fees stay null/not_verified; document statuses such as
+  required, conditional and commonly_requested remain distinct.
+- Official-source results are discoveries, not trusted facts. They preserve
+  provenance and remain in the review workflow until manual review and
+  separately approved promotion.
+- Bundle imports are JSON schema version 1; validation reports malformed,
+  duplicate, conflicting, stale and provenance-incomplete records. Promotion
+  requires explicit record approval, reviewer and note; writes use backup and
+  atomic replacement. Never promote test fixtures or pending discoveries.
+- Centre authorization must be explicit and source-backed. No coordinates,
+  offices, fees, documents, eligibility or government facts may be fabricated.
+- Backend settings read GEMINI_API_KEY, GEMINI_MODEL, LOG_LEVEL, CORS_ORIGINS,
+  CIVICROUTE_VERIFIED_GENERAL_PORTAL_URL, OFFICIAL_SOURCE_PROVIDER,
+  BRAVE_SEARCH_API_KEY and OFFICIAL_SOURCE_APPROVED_HOSTS. Values are not
+  recorded here. Gemini/live search remain optional/configuration-dependent.
+- Frontend environment names include VITE_API_BASE_URL and
+  VITE_GOOGLE_MAPS_API_KEY. Values are not recorded here. Production CORS must
+  be restricted to explicit deployed frontend origins; no wildcard with
+  credentials.
+- No authentication, accounts, application submission, database, request
+  history persistence, or additional service journeys were added.
+
+CHRONOLOGICAL TIMELINE
+======================
+2026-10-29 — Initial repository and API inspection. A FastAPI backend was
+  present; the initial catalog was empty. The first handoff/work log recorded
+  the proposed request/response shape and warned that frontend/data agreement
+  had not yet been confirmed.
+
+2026-10-29 — Minimal backend package setup: Pydantic models, FastAPI routes,
+  configuration, deterministic pipeline, isolated optional Gemini wrapper,
+  empty clearly labeled development catalog, tests, and ignore rules. Existing
+  files and legacy app entry were retained.
+
+2026-10-29 — Added request validation, /health and /ask; restricted CORS using
+  explicit environment origins; documented local API setup and /docs.
+
+2026-10-29 — Added strict catalogue loading, HTTPS source validation, exact
+  service IDs, duplicate checks and unknown-fee handling. Implemented
+  deterministic intent classification, optional structured Gemini intent
+  output with strict Python validation/fallback, deterministic trusted-record
+  retrieval, controlled unsupported responses, and optional step composition.
+
+2026-10-29 — Added authoritative response building: only composed steps may
+  come from the model; documents, fees, links, sources, offices and dates are
+  copied from validated trusted data. Added tests against model-injected fake
+  fees/URLs and preserved conditional/common document labels.
+
+2026-10-29 — Added clarification behavior for missing task/locality; official
+  source retrieval interface; separate discovery persistence and review states;
+  integration that stores but never trusts retrieved discoveries; configurable
+  Brave provider (disabled without configuration) with mocked tests. No tests
+  make live provider requests.
+
+2026-10-29 — Prepared flexible JSON bundle validation/staging and explicit
+  record-level promotion. Promotion preserves existing catalogue records,
+  provenance and document states, rejects conflicts/stale/missing provenance,
+  requires human approval, and uses backups plus atomic writes. No synthetic
+  government data was written into trusted files.
+
+2026-10-29 — Frontend/API integration troubleshooting: fixed local CORS
+  preflight and the income-certificate deterministic matching regression while
+  preserving the /ask payload. Frontend React + TypeScript + Vite integration
+  was inspected; Google Maps browser key remains frontend-only and local.
+
+2026-10-30 — Added verified-centre backend search and connected existing map.
+  Added district/taluk/area filtering, optional coordinates, bounded results,
+  Haversine distance, explicit verified capability/provenance checks, marker
+  detail windows, loading/empty/error handling and opt-in browser location.
+  Tested using temporary synthetic fixtures. Catalogue data files were not
+  modified.
+
+CURRENT VALIDATION RESULTS (2026-10-30)
+======================================
+Backend full suite:
+  python -m pytest backend/tests -q --basetemp=work/pytest-centres-final-2
+  Result: 233 passed in 3.14s.
+
+Frontend typecheck (from frontend root):
+  npm run typecheck
+  Result: passed.
+
+Frontend production build (from frontend root):
+  npm run build
+  Result: passed; Vite transformed 1,676 modules.
+
+The repository .venv does not currently contain pytest; successful tests ran
+using system Python. No live Gemini, Brave, Google Maps, or deployed backend
+requests were made as part of this work. Current services.json contains no
+promoted service/centre entries, so the new endpoint will not provide real
+centre results until verified records are supplied and approved.
+
+INSTALL AND RUN
+===============
+Backend (PowerShell, from backend working root):
+  python -m pip install -r requirements.txt
+  $env:CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+  python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+
+Backend tests:
+  python -m pytest backend/tests -q
+
+Frontend (from frontend root):
+  npm install
+  npm run dev -- --host 127.0.0.1
+  npm run typecheck
+  npm run build
+
+Expected local URLs:
+  Backend docs: http://127.0.0.1:8000/docs
+  Backend health: http://127.0.0.1:8000/health
+  Frontend Vite dev server: http://127.0.0.1:5173
+
+NEXT HANDOFF ACTIONS
+====================
+1. Data teammate supplies the actual JSON service/centre bundle with source
+   provenance. Run bundle validation/staging and resolve all review findings.
+2. Obtain explicit reviewer approval and promote only approved records. Never
+   test promotion against production using synthetic fixtures.
+3. Manually run backend + frontend with local configuration and verify
+   GET /centres, map markers, source details and optional distance against the
+   approved records.
+4. Update README.md: it still contains pre-integration wording that says no
+   centres endpoint is implemented and maps ownership/endpoint is pending.
+   The current implementation now has GET /centres, so README must be brought
+   into sync before team handoff/deployment.
+5. Recheck production CORS, restricted browser key referrer restrictions,
+   backend secret-store setup, rate limiting and deployment monitoring before
+   any public deployment.
+
+END OF HANDOFF. See working-Backend.txt for the detailed per-step engineering
+log, historical test counts and implementation notes.

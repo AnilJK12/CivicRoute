@@ -1,0 +1,623 @@
+CivicRoute Backend Work Log
+Updated: 2026-10-29
+
+Purpose
+-------
+CivicRoute is a Karnataka public-service navigator. The backend should identify a supported service, retrieve its verified catalog entry, compose plain-language steps, validate the result with Pydantic, and return structured JSON. Verified service data is authoritative. The LLM may only rephrase verified steps and must not invent service facts.
+
+Agreed constraints and decisions
+--------------------------------
+- Supported service IDs: aadhaar_update, income_certificate, civic_complaint. Use unknown for unsupported or ambiguous requests.
+- Preserve existing features and integration points; do not remove or rename existing endpoints or behavior without agreement.
+- Keep services.json as the authoritative verified service catalog. Do not add unverified facts or silently persist model/search output.
+- Supported languages in the existing API: en and kn. Kannada wording needs native-speaker review before claiming full support.
+- Gemini is optional. Catalog wording must remain the fallback if generation is unavailable or invalid.
+- Never put API keys, secret values, or other credentials in this file. Environment-variable names below are safe to record.
+- No frontend files or frontend API types were found in the inspected repository. Therefore no frontend contract could be checked or agreed from repository evidence. The proposed contract below is the requested initial contract; confirm it with frontend/data teammates before implementation changes that could affect integration.
+
+Current folder structure
+------------------------
+Repository root:
+  app.py             FastAPI application, request/response models, deterministic phrase classifier, catalog loading, optional Gemini step rephrasing, /ask and /health.
+  services.json      Verified service catalog; currently an empty JSON list.
+  requirements.txt   FastAPI, Uvicorn, and Google GenAI Python dependencies.
+  README.md          Local run instructions, current API description, and catalog schema.
+  .env.example       Environment-variable template; values are not recorded here.
+  outputs/           Empty at last inspection.
+  work/              Empty at last inspection.
+
+No frontend source, test directory, .gitignore, root .env file, or Git metadata was present at last inspection. Recheck before relying on this snapshot.
+
+Environment-variable names
+--------------------------
+GEMINI_API_KEY
+GEMINI_MODEL
+LOG_LEVEL
+
+Do not record values here. GEMINI_API_KEY is optional for the current backend; GEMINI_MODEL and LOG_LEVEL have code defaults.
+
+Proposed API contract (requested initial contract; frontend agreement not verified)
+---------------------------------------------------------------------------------
+POST /ask request:
+{
+  "question": string,
+  "language": "en" | "kn"
+}
+
+Supported-service response:
+{
+  "status": "ok",
+  "service_id": string,
+  "service_name": string,
+  "language": "en" | "kn",
+  "steps": [string],
+  "documents": [structured document entries from verified data],
+  "fee": {
+    "amount": number | null,
+    "currency": "INR",
+    "status": "verified" | "not_verified",
+    "note": string | null
+  },
+  "online_option": {
+    "available": boolean | null,
+    "url": string | null,
+    "status": string
+  },
+  "office_type": string | null,
+  "grievance": string | null,
+  "sources": [{"title": string, "url": string}],
+  "last_verified": string | null,
+  "warnings": [string]
+}
+
+Unknown/unsupported response:
+{
+  "status": "unsupported",
+  "service_id": "unknown",
+  "service_name": null,
+  "message": string,
+  "official_portal_url": string | null,
+  "suggested_services": [string],
+  "warnings": [string]
+}
+
+Existing implementation and compatibility mismatch
+--------------------------------------------------
+The current POST /ask request already accepts question and language with en/kn, defaults language to en, rejects extra fields, and constrains question length to 1–2000 characters. The existing response model does not match the proposed response: it returns service_id, supported, language, answer, steps, and nested service fields (documents, fees, official_links, sources, last_verified). It lacks status, service_name, singular normalized fee, online_option, office_type, grievance, warnings, official_portal_url, and suggested_services. Existing documents are strings; fee and link records use a different shape. The unsupported response currently has answer/steps/service fields instead of the proposed unsupported shape. GET /health is also an existing endpoint to preserve.
+
+No frontend is present to demonstrate whether either response shape is already integrated. Data teammates' agreement is likewise not evidenced in this workspace. This is an integration decision to confirm before changing the current response contract. If the proposed contract is accepted, update with explicit compatibility in mind and retain GET /health.
+
+Planned steps (not yet implemented)
+-----------------------------------
+1. Confirm the proposed response contract with frontend and data teammates; if they use a different agreed shape, document the smallest compatible mapping before changing code.
+2. Define strict Pydantic response and nested data models for supported and unsupported responses; validate catalog entries and enforce the agreed service IDs.
+3. Populate services.json only with facts verified from authoritative sources, including structured documents and fee/online/office/grievance/source metadata. Keep unknown as a fallback, not a retrieved service record.
+4. Preserve deterministic classification and catalog retrieval. Compose plain-language steps from verified content; constrain and validate optional LLM rephrasing, with verified catalog text as fallback.
+5. Configure browser CORS only after the frontend origin is known. Add an ignore rule for local secrets if project ownership/repository setup permits.
+6. Run the checks below and record actual commands/results before marking implementation complete.
+
+Test and run commands
+---------------------
+Environment setup (PowerShell):
+  py -m venv .venv
+  .venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+
+Run the existing API:
+  uvicorn app:app --reload
+
+Planned verification after implementation (not run as part of this log update):
+  python -m compileall app.py
+  python -m pytest
+  Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/ask -ContentType 'application/json' -Body '{"question":"How do I apply?","language":"en"}'
+  Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/health
+
+There is no test suite currently present in the inspected tree. Do not report these checks as passed until command output is captured.
+
+Status checklist
+----------------
+[x] Read-only inspection of current root files, backend, catalog, requirements, README, and environment-variable names; no secret values recorded.
+[x] Confirmed no frontend source/types are present in the inspected tree; frontend/data contract agreement remains unverified.
+[x] Documented the proposed contract and its mismatch with the existing backend response.
+[ ] Confirm proposed response shape with frontend and data teammates.
+[ ] Add/validate verified catalog data for aadhaar_update, income_certificate, and civic_complaint.
+[ ] Implement strict request/response and catalog validation while preserving GET /health and agreed compatibility.
+[ ] Configure CORS for the confirmed frontend origin, if cross-origin browser access is needed.
+[ ] Run and record tests and endpoint checks.
+
+Dated progress
+--------------
+2026-10-29 — Inspected the repository without changing backend files. Found an existing FastAPI backend and an empty service catalog. No frontend code or API types were available for comparison. Recorded the requested initial contract and the response-shape mismatch with the current API. No tests were run; the current API contract remains to be confirmed with frontend/data teammates before implementation changes.
+
+Implementation progress — 2026-10-29
+-------------------------------------
+Added files:
+  backend/__init__.py             Package marker.
+  backend/main.py                 FastAPI /health and /ask routes, preserving the existing response shape.
+  backend/schemas.py              Pydantic request and response models.
+  backend/config.py               Environment-based Gemini/log settings and pathlib catalog path.
+  backend/pipeline.py             Catalog loading, allowlisted classification, retrieval, step composition, response validation.
+  backend/llm.py                  Isolated optional Gemini wrapper with catalog-step fallback.
+  backend/data/services.json      Explicitly labeled, unverified development fixture with an empty services list; no government facts.
+  backend/.env.example            Placeholder variable names only.
+  backend/tests/test_pipeline.py  Synthetic-data tests only.
+  .gitignore                      New ignore rules for environment files, virtual environments, bytecode, and test artifacts.
+
+Updated:
+  requirements.txt                Added pytest as the test dependency; existing runtime dependencies retained.
+  working-Backend.txt             This implementation and verification record.
+
+Verification performed:
+  python -c "import backend.main, backend.schemas, backend.config, backend.pipeline, backend.llm; print('backend imports: ok')" — passed using dependencies installed in a temporary workspace dependency directory.
+  python -m compileall -q backend — passed.
+  python -m pytest backend/tests -q — 6 passed, 1 third-party Starlette/httpx deprecation warning.
+
+The package tests use synthetic data and confirm the empty development catalog, classification, ambiguity fallback, request validation, and existing unknown response shape. The new package preserves the root app.py and other pre-existing project files. The frontend/data contract is still not confirmed; no frontend code was present. This minimal package intentionally retains the current response shape pending that integration decision. No verified service records, API credentials, or secret values were added.
+
+Current setup commands
+----------------------
+Install dependencies (PowerShell):
+  py -m venv .venv
+  .venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+
+Run the added package API from repository root:
+  uvicorn backend.main:app --reload
+
+Run tests from repository root:
+  python -m pytest backend/tests -q
+
+Current implementation checklist (this section supersedes earlier planned setup items)
+-----------------------------------------------------------------------------------
+[x] Added isolated backend package modules while preserving the root-level backend and its existing contract.
+[x] Added environment-based Gemini settings and a single optional Gemini wrapper; no secret values stored.
+[x] Added an explicitly unverified, empty development catalog fixture.
+[x] Added pytest coverage using synthetic test data.
+[x] Python compile check and package imports passed with requirements installed in a temporary workspace dependency directory; pytest passed 6 tests with one third-party deprecation warning.
+[ ] Confirm the response contract with frontend/data teammates; no frontend code was found in this repository.
+[ ] Replace the development fixture only with data teammate supplied and verified service records.
+[ ] Re-run tests after verified catalog or API contract changes.
+
+API setup update — 2026-10-29
+-----------------------------
+Changes for the minimal HTTP API:
+  backend/main.py                 /health and /ask routes; configured-origin CORS; no Gemini call in the route.
+  backend/schemas.py              Request validation and supported/unsupported response models for the agreed structured contract; legacy root-app models remain available.
+  backend/config.py               CORS_ORIGINS environment parsing; wildcard rejected.
+  backend/.env.example            Added CORS_ORIGINS name; contains names only.
+  backend/tests/test_api.py       Health, request validation, both response schemas, fixture response, CORS configuration, and docs-route configuration.
+  backend/tests/test_pipeline.py  Existing deterministic pipeline tests adjusted to the retained package schemas.
+  README.md                       Documents package server command, current fixture response, /docs, and CORS configuration.
+  working-Backend.txt             This progress entry.
+
+Run/install:
+  pip install -r requirements.txt
+  uvicorn backend.main:app --reload
+  python -m pytest backend/tests -q
+
+Verification:
+  Package imports — passed with dependencies available in the task-local Python dependency path.
+  python -m compileall -q backend — passed.
+  python -m pytest backend/tests -q — 13 passed.
+  The API app registers /docs and OpenAPI generation includes /ask. The unsupported response returned by the route validates against UnsupportedResponse; a synthetic supported response validates against SupportedResponse.
+  A live HTTP server and HTTP /docs fetch could not be verified in this sandbox: local loopback socket access was denied. The documented uvicorn command is provided for local use; verify it outside this restricted environment.
+
+Current route behavior: with the explicitly empty, unverified catalog, POST /ask returns status=unsupported with service_id=unknown and an explicit development-fixture warning. It does not fabricate a supported service response. GET /health returns only {"status":"ok"}. CORS allows only comma-separated explicit origins from CORS_ORIGINS; wildcard is rejected. Gemini is not called.
+
+Knowledge-base loader progress — 2026-10-29
+-----------------------------------------
+Added `backend/knowledge_base.py` with deterministic Pydantic validation and sanitized `KnowledgeBaseError` messages. It reads the existing package envelope (and legacy list catalogs), validates entries at load time, rejects duplicate IDs, and retrieves only the allowlisted IDs. A requested ID missing from the supplied file raises a sanitized error. The existing empty development fixture loads as an empty mapping; no production entries were invented.
+
+Required record shape:
+  id: aadhaar_update | income_certificate | civic_complaint
+  name: nonblank string
+  steps: nonempty en/kn step mapping
+  documents: list of {name, status: required | conditional | commonly_requested, note?}
+  fee: {amount: number | null, currency: INR, status: verified | not_verified, note: string | null}
+  online_option: {available: boolean | null, url: absolute HTTPS URL | null, status: nonblank string}
+  office_type: string | null
+  grievance_route: string | null
+  sources: nonempty list of {title, url: absolute HTTPS URL}
+  last_verified: ISO date | null
+
+Unverified fees require amount=null; verified fees require an amount. No amount is inferred and no missing fee defaults to zero. Document status is preserved as provided and restricted to the explicit status labels. No official URL exceptions are currently configured; all source and online URLs must use absolute HTTPS URLs.
+
+Tests added in `backend/tests/test_knowledge_base.py` cover valid synthetic records, the repository development catalog, missing fields, unsupported IDs, empty sources, non-HTTPS/relative URLs, missing requested service, and unknown fees remaining null. Tests use synthetic/example.test values only.
+
+Verification:
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 24 passed.
+  The task environment needs the explicit workspace basetemp because its default temporary directory is not writable. Dependencies were available from the temporary workspace dependency path.
+
+The current `/ask` development route still returns the unsupported fixture while the catalog has no verified service entries. The loader does not call or depend on Gemini. Data-member production records remain pending.
+
+Intent classifier progress — 2026-10-29
+---------------------------------------
+Updated `backend/pipeline.py` with `classify_intent(question, language)`. It returns only aadhaar_update, income_certificate, civic_complaint, or unknown. Explicit deterministic English phrases and a few fixed typo variants are handled without a model. Ambiguous/multiple keyword matches remain unknown. Gemini is considered only when an API key exists and the text contains a related service signal; model output is constrained to one JSON enum field, validated for exact shape and allowlisted value, and additionally checked against the query's possible service signals. Temperature is zero and the request timeout is five seconds. Model errors, malformed output, rate limits/timeouts, or unrelated input safely fall back to deterministic matching or unknown. No question or response text is logged.
+
+Updated `backend/llm.py` with the structured Gemini classifier method. The existing API response models/routes are unchanged.
+
+Added `backend/tests/test_intent.py` covering clear English examples, explicit misspellings, vague and unrelated requests, model success, malformed/extra/unexpected output, a mismatched model intent, missing key, timeout/rate-limit-style failures, and the structured-output schema/temperature/timeout settings. Repository search found no team-reviewed Kannada service keywords; no Kannada service phrases were invented. A test confirms the existing Kannada fallback wording stays unknown until reviewed terms are supplied.
+
+Verification on 2026-10-29:
+  python -m compileall -q backend — passed.
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 44 passed.
+
+Service retrieval progress — 2026-10-29
+---------------------------------------
+Added `retrieve_service(service_id)` in `backend/pipeline.py`. It uses a one-entry process cache of `load_services()` output, so entries are validated before retrieval and exact matching `ServiceRecord` instances are returned without any generative call. Restart the process to refresh the in-memory catalog. Unsupported IDs, missing records, or catalog-load errors produce the existing structured unsupported response with no service details.
+
+The general portal URL is omitted by default. It is included only through `CIVICROUTE_VERIFIED_GENERAL_PORTAL_URL`, a setting whose name makes the team verification requirement explicit; configuration rejects anything other than an absolute HTTPS URL. No portal is currently configured. Added the variable name to `backend/.env.example`; no URL value or service facts were added.
+
+Added `backend/tests/test_retrieval.py` covering exact lookup for each supported ID, unknown IDs, missing entries, and optional verified-portal configuration.
+
+Verification on 2026-10-29:
+  python -m compileall -q backend — passed.
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 51 passed.
+
+The response contract and `GET /health` remain unchanged. Retrieval does not search the web or invent fees, links, offices, eligibility, or document requirements.
+
+Step composition progress — 2026-10-29
+--------------------------------------
+Implemented `compose_steps(entry, language)` in `backend/llm.py` using the Google Gen AI Python SDK Interactions API. The Gemini wrapper is now the only module that imports/calls the SDK; the legacy root app calls the composer without changing its response contract. The model receives only stored verified steps from the selected entry and the requested language. Structured output permits only a `steps` array; Python rejects additional fields, blank items, malformed output, or a changed step count. The prompt prohibits adding/removing/strengthening requirements or creating documents, fees, links, eligibility, offices, deadlines, or legal claims.
+
+Reviewed prewritten Kannada steps are returned unchanged whenever present. Missing API key, provider failure, or invalid output returns stored steps and a warning where appropriate. If the requested language is missing, the original stored steps are returned with a warning. SDK calls use an eight-second timeout, one bounded retry, and `store=False`; logs contain no prompts, keys, or exception details. `GEMINI_API_KEY` is read from backend environment settings only.
+
+Model choice and docs check:
+  Default is `gemini-3.8-flash`, centralized in `backend/config.py`; override it with the environment variable `GEMINI_MODEL`.
+  Google's current official model guide lists Gemini 3.8 Flash as stable, and the structured-output guide lists support for structured output. The current official Python quick-start uses `google-genai` and `client.interactions.create` with `response_format` schema. Account/project entitlement cannot be checked without invoking the configured account; if unavailable, runtime fallback is safe.
+  References: https://ai.google.dev/gemini-api/docs/models ; https://ai.google.dev/gemini-api/docs/structured-output ; https://ai.google.dev/gemini-api/docs/interactions-overview
+
+Changed files: `backend/llm.py`, `backend/config.py`, `backend/pipeline.py`, `app.py`, `requirements.txt`, `README.md`, and `backend/tests/test_intent.py`. Added mocked tests in `backend/tests/test_compose_steps.py`; no live key/API call was used.
+
+Verification on 2026-10-29:
+  python -m compileall -q backend app.py — passed.
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 62 passed.
+
+Response validation/build progress — 2026-10-29
+---------------------------------------------
+Added `validate_and_build_response(entry, composed_steps, language)` to `backend/pipeline.py`. It revalidates the service entry with `ServiceRecord`, then constructs the supported Pydantic response from the entry's service ID/name, document names and statuses, fee, online option, office/grievance fields, source records, and original verification date. Generated content is parsed strictly as steps-only data; extra model fields, blank output, or a changed step count cause stored verified steps to be used with a warning.
+
+The source URL list is copied from the entry and checked against the entry's URL set. A `not_verified` fee is returned with a null amount; it is never converted to zero. `required`, `conditional`, and `commonly_requested` document labels stay distinct. Missing dates remain null, and missing or older-than-365-day verification dates produce warnings. Warnings also cover unavailable fee/online/office/grievance/document information. No date, fee, link, office, or grievance detail is inferred.
+
+Updated `DocumentEntry` to represent the catalog's explicit status labels rather than a boolean required flag. Added `backend/tests/test_response_build.py`, including adversarial generated output containing a fake fee and fake links; those extra fields are rejected, and structured output remains sourced from the validated entry.
+
+Verification on 2026-10-29:
+  python -m compileall -q backend — passed.
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 68 passed.
+
+The production catalog is still empty, so response-builder tests use synthetic records only. No production facts were added.
+
+Unsupported-request fallback progress — 2026-10-29
+--------------------------------------------------
+Connected the package `/ask` route to the existing classify → retrieve → compose → validate pipeline. Added an explicit allowlist guard: `unknown`, malformed IDs, classification errors, and missing/invalid retrieved records return `UnsupportedResponse` before the step composer is called. Ambiguous questions mentioning multiple service intents now remain `unknown` without asking Gemini to choose between them.
+
+The fallback returns a concise explanation, the three agreed supported service IDs as suggestions, no fabricated steps/documents/fees/offices, and the general portal URL only when `CIVICROUTE_VERIFIED_GENERAL_PORTAL_URL` is explicitly configured with an HTTPS URL. Its wording and warning state that the general portal may not cover every service. The empty development knowledge base therefore gives safe unsupported responses. Blank question handling remains in Pydantic request validation.
+
+Updated the README fallback example. Added `backend/tests/test_unsupported.py` for unrelated and ambiguous queries, empty knowledge base, classifier/model failure, unexpected IDs, and optional portal behavior. Tests assert the composer is not called for unsupported cases.
+
+Verification on 2026-10-29:
+  python -m compileall -q backend app.py — passed.
+  python -m pytest backend/tests -q --basetemp=work/pytest-tmp — 74 passed.
+
+Frontend contract coordination — 2026-10-29
+-------------------------------------------
+Inspected the repository's files and searched for frontend requests/types. No frontend source, fetch/axios caller, or API type was present. The available Codex task list also contained no identifiable frontend-owner task/contact, so direct coordination and confirmation with the owner remain pending. No frontend files were edited.
+
+Backend contract confirmed from `backend/schemas.py` and `backend/main.py`:
+  Request: `question` is required, nonblank and at most 2,000 characters; `language` is optional and defaults to `en`, otherwise `en` or `kn`; extra fields are rejected.
+  Supported response: `status`, `service_id`, `service_name`, `language`, `steps`, `documents` (`name`, `status`, `note`), `fee`, `online_option`, `office_type`, `grievance`, `sources`, `last_verified`, `warnings`.
+  Unsupported response: `status`, `service_id: "unknown"`, `service_name: null`, `message`, `official_portal_url`, `suggested_services`, `warnings`.
+
+Because frontend expectations are unavailable, exact contract agreement cannot be asserted and there is no evidence-based mismatch to list. The smallest compatible approach is to keep this backend contract unchanged until the frontend owner shares their request/response types; if they differ, add an adapter/aliases at the API boundary instead of changing the existing response fields.
+
+README now contains the fictional income-certificate request, the exact unsupported response for the current empty development catalog, and a curl smoke check. CORS remains configured through comma-separated `CORS_ORIGINS`; wildcard origins are rejected and credentials are enabled only with an explicit allowlist. No production origin has been provided or configured in this workspace.
+
+Status:
+  [x] Documented current backend request and response contract.
+  [x] Added fictional request/response examples and curl smoke command.
+  [x] Confirmed environment-based CORS allowlist and wildcard rejection in code/tests.
+  [ ] Frontend owner confirms request/response compatibility; owner/code not available in this workspace.
+
+Follow-up verification — 2026-10-29: called the package route function with the README's fictional income-certificate request; the returned JSON matched the documented unsupported response. The live curl command is documented for use when the local server is running. Focused route/fallback tests: 13 passed.
+
+Centre/maps ownership review — 2026-10-29
+----------------------------------------
+Inspected the repository for centre/map records, coordinates, centre endpoints, query parameters, and authorization fields. No `centres.json`, centre schema, centre endpoint, map integration code, coordinates, or service-authorization data exists in this workspace. Checked the available task list for a maps/integration owner; no relevant owner task/contact was identifiable. The similarly named "K Map Answer" task is about Karnaugh maps, not CivicRoute maps.
+
+No centre endpoint, duplicate centre logic, location schema, or data file was added or changed. Endpoint/data ownership remains undecided pending direct agreement with the maps/integration member.
+
+Coordination decision required before implementation:
+  - If the maps member owns GET /centres and centre records, CivicRoute should integrate with that endpoint and its approved contract; do not build a second endpoint or reinterpret their schema.
+  - If the team assigns GET /centres to this backend, obtain the maps member's approved `centres.json` schema and query contract first (including pincode/area input and coordinate provenance), then implement that contract only.
+
+Required safety rules for either integration: apply only explicitly confirmed service compatibility before distance ranking; expose authorization as unverified where evidence is absent; never imply that a nearby location is authorized; do not generate coordinates, fees, office names, eligibility, or authorization through Gemini.
+
+Status:
+  [x] Read-only repository/task inspection for existing centre/map integration points.
+  [x] Avoided endpoint/schema changes while ownership and approved data contract are unavailable.
+  [ ] Maps/integration owner confirms data ownership and endpoint owner.
+  [ ] If this backend owns GET /centres, maps member supplies/approves the centres.json and query contract.
+
+Focused backend security review — 2026-10-29
+-------------------------------------------
+Findings and fixes:
+  [x] Request validation requires a nonblank question, caps it at 2,000 characters, permits only `en`/`kn`, and rejects unexpected fields. A shared generic 422 handler now avoids echoing submitted values in validation errors.
+  [x] No backend route requests Aadhaar numbers, OTPs, passwords, or identity uploads. No request persistence was found. Likely sensitive question text (including long digit sequences, email addresses, OTP/password/PIN terms) is blocked before any classifier model call; matching deterministic intents may still be answered without sending text to Gemini. Do not include personal data in guidance questions.
+  [x] App code does not log question bodies. Provider failures are handled without logging prompts, credentials, exception dumps, or local paths. Legacy catalog-load logging was reduced to a sanitized message.
+  [x] CORS is controlled by `CORS_ORIGINS`, accepts explicit HTTP(S) origins only, and rejects wildcard or malformed origins. No production origin was supplied/configured in this workspace.
+  [x] External Gemini calls remain isolated in `backend/llm.py`, with an 8-second timeout and at most two attempts. SDK interaction storage is disabled (`store=False`).
+  [x] FastAPI validation errors are generic. HTTPS source/online URLs and the optional general portal URL are validated; origin parsing rejects credentials, paths, queries, fragments, and wildcard origins.
+  [x] Dependencies are constrained in `requirements.txt` (FastAPI `<1`, Uvicorn `<1`, Google GenAI `<2`, pytest `<9`).
+  [x] `.gitignore` covers `.env`, virtual environments, Python/test artifacts, and local secret-file patterns. `.env.example` has variable names with empty values only. No root `.env` file exists.
+  [x] README documents no request persistence, sensitive-data handling, exact-origin CORS configuration, and reverse-proxy/gateway rate and request-size limits as deployment requirements. Application-level rate limiting is not implemented.
+
+Verification and scope limits:
+  - `python -m compileall -q backend app.py` — passed.
+  - `python -m pytest backend/tests -q --basetemp=work/pytest-tmp` — 94 passed (using the workspace dependency path in this environment).
+  - A high-confidence credential-pattern scan found 0 matches; output included counts only and no secret values. Tests also check `.env.example` placeholders and that provider failures do not log the question.
+  - No frontend source/bundle files or root `.env` were found. No `.git` metadata exists in this workspace, so committed-file status and Git diff could not be inspected. This review does not assert that remote history or deployment environments contain no credentials.
+
+Changed for this review: `backend/http_errors.py`, `backend/url_validation.py`, `backend/main.py`, `backend/config.py`, `backend/knowledge_base.py`, `backend/pipeline.py`, `backend/tests/test_security.py`, related URL/CORS tests, root `app.py`, `.env.example`, `.gitignore`, and `README.md`.
+
+Final backend QA pass — 2026-10-29
+----------------------------------
+Added `backend/tests/test_final_qa.py` with deterministic coverage for health and `/ask` route contracts, blank/oversized questions, unsupported language, all three supported service IDs using synthetic validated records, out-of-scope requests, malformed retrieved entries, and Gemini timeout/rate-limit/malformed-output fallback behavior. Existing tests cover empty/malformed catalog entries, missing Gemini key, generated fake fee/link rejection, null unverified fees, conditional documents, authoritative source/date fields, and response schemas. No product behavior or feature scope was changed for QA.
+
+Verification (using the prepared workspace dependencies because pytest is not installed in the active Python environment):
+  Focused: `python -m pytest backend/tests/test_final_qa.py -vv --basetemp=work/pytest-final-focused` — 14 passed in 0.44s.
+  Full suite: `python -m pytest backend/tests -q --basetemp=work/pytest-final-full` — 108 passed in 0.74s.
+  Both commands were run with `PYTHONPATH` set to the repository root plus `work/python-deps`. All model calls were mocked; no live API key or Gemini request was used.
+
+Status:
+  [x] Health and request/response contracts covered.
+  [x] Request validation limits and supported/unsupported intent paths covered.
+  [x] Knowledge-base validation and authoritative response fields covered.
+  [x] Gemini missing-key, timeout, rate-limit, malformed-output, and bounded fallback paths covered.
+  [x] Complete backend test suite passed: 108 passed, 0 failed.
+
+Hackathon deployment preparation — final status (2026-10-29)
+-----------------------------------------------------------
+README now documents the PowerShell virtual-environment/install command, local Uvicorn command, pytest command, `GET /health` URL, `POST /ask` request and current unsupported response example, supported-response field list, environment variables, exact-origin CORS setup, key-rotation steps, and current scope/fallback limitations. Root and backend `.env.example` files contain environment names only with empty values. `.env` remains covered by `.gitignore`; the application does not auto-load `.env`, so secrets must be injected through the shell or deployment secret manager.
+
+Startup/fallback verification:
+  - With `GEMINI_API_KEY` unset, importing `backend.main` succeeds and `classify_intent("I need an income certificate", "en")` returns `income_certificate` deterministically.
+  - Full suite with Gemini unset: `python -m pytest backend/tests -q --basetemp=work/pytest-deployment-final` — 108 passed in 0.73s (with `PYTHONPATH` including the prepared `work/python-deps`).
+  - Credential-pattern scan of README, this work log, and both env examples: 0 matches; scan printed counts only. Root `.env` absent and `.gitignore` has `.env` rule.
+  - A live Uvicorn/HTTP health smoke check could not be confirmed in this restricted workspace: the attempted local server did not answer at `127.0.0.1:8000`, and starting a hidden server process was blocked by the execution policy. Application import, route tests, and documentation commands passed; another team member should run the documented server command in their local environment and check `/health`.
+  - No Git metadata is present, so tracked-file status cannot be checked with Git. No deployment or external secret was configured.
+
+Fallbacks and limitations:
+  - With Gemini disabled or unavailable, deterministic clear-phrase matching is used; uncertain or unrelated requests return `unknown`. Validated stored steps remain authoritative and are used if composition is unavailable. The current services catalog is empty/unverified, so the current checkout safely returns unsupported responses for all journeys.
+  - Maps/centres are not implemented; Maps outage has no map/centre result or location fallback.
+  - No authentication, accounts, database persistence, application submission, additional journeys, or application-level rate limiting. Before public exposure, configure a rate-limiting gateway/reverse proxy, request-size limits, production CORS origins, and deployment secret management.
+  - If a key leaks: revoke/delete it at the provider immediately, create a replacement, update only the environment/secret manager, restart the service, and remove exposed copies from repository history where possible. Revocation is required even if history is cleaned.
+
+Status:
+  [x] Documented install, local run, test, health, API, environment, CORS, and key-rotation instructions.
+  [x] Documented unimplemented features and Gemini/Maps fallback behavior.
+  [x] Confirmed application import and deterministic classification with Gemini disabled.
+  [x] Full tests passed: 108 passed, 0 failed.
+  [ ] Live local HTTP startup/health smoke check remains to be run outside this restricted workspace.
+
+Step: Add the required per-prompt work-log entry format and record this prompt.
+Date: 2026-10-29
+Status: COMPLETE
+Files changed: `working-Backend.txt`
+Implementation summary: Appended this dated handoff entry using the requested fields. No application code or API behavior changed.
+Commands run: PowerShell `Add-Content` to append this entry; `Get-Content working-Backend.txt -Tail 18` to verify it.
+Test results: Manual check passed; the new entry is present and contains no actual keys, tokens, passwords, personal information, or `.env` contents.
+API contract impact: None.
+Security/secret review: No secret values added.
+Known issues: Previously recorded live local HTTP startup/health smoke check remains unconfirmed in the restricted workspace.
+Next step: After each subsequent prompt, append a dated entry with these fields and accurate status/evidence.
+
+Step: Load optional project-root Gemini configuration safely and verify Gemini-disabled fallback.
+Date: 2026-10-29
+Status: COMPLETE
+Files changed: `backend/config.py`, `backend/llm.py`, `backend/pipeline.py`, `requirements.txt`, `backend/tests/test_config.py`, `backend/tests/test_intent.py`, `backend/tests/test_compose_steps.py`, `backend/tests/test_unsupported.py`, `working-Backend.txt`.
+Implementation summary: `backend/config.py` now loads the project-root `.env` with `override=False`, represents missing/empty Gemini key/model as `None`, and no longer embeds a default model ID. Added constrained `python-dotenv` dependency. Classifier and composer skip Gemini unless both settings are present, preserving deterministic/stored-content fallback. Added temporary-file dotenv loading, environment precedence, missing configuration, configured-model propagation, and missing-model no-call tests. `.env` was not opened or modified; no live Gemini call was made.
+Commands run: Focused/full backend pytest; `python -m compileall -q` on changed Python modules; runtime check with both Gemini environment variables empty. Source/test content was inspected manually. Git diff could not be run because this workspace has no Git metadata.
+Test results: `python -m pytest backend/tests -q --basetemp=work/pytest-gemini-config-final` — 114 passed in 0.76s. Compile check passed. Runtime check confirmed Gemini disabled and deterministic result `income_certificate`.
+API contract impact: None.
+Security/secret review: No key values were read, printed, logged, or added. Tests use synthetic credentials only. No API request was made.
+Known issues: This checkout has an ignored local `.env`; behavior with an absent file is covered using temporary config and empty environment variables. Existing missing production service data remains unchanged.
+Next step: Supply verified service data through the existing validated catalog. Configure Gemini only through environment/secret management when desired.
+Final verification update — 2026-10-29: After normalizing whitespace-only Gemini settings to missing, reran the complete suite: `python -m pytest backend/tests -q --basetemp=work/pytest-gemini-config-verified` — 114 passed in 0.75s. Recompiled changed Python modules successfully. Final manual source review found no scope changes; Git-based diff remains unavailable because the workspace has no `.git` metadata.
+
+Step: Fix local frontend CORS preflight for POST /ask.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/main.py`, `backend/tests/test_api.py`, `working-Backend.txt`.
+Implementation summary: FastAPI now always installs CORSMiddleware. When no `CORS_ORIGINS` are configured it uses the two explicit local Vite origins; when set, the configured allowlist remains authoritative. Allowed methods include GET, POST, OPTIONS; allowed headers include Content-Type and Authorization. Added preflight response coverage for both local origins. Existing direct valid POST /ask contract test remains and passes. No endpoint, schema, service logic, or other planned feature changed.
+Commands run: `python -m pytest backend/tests/test_api.py -q --basetemp=work/pytest-cors-focus-final`; `python -m pytest backend/tests -q --basetemp=work/pytest-cors-full-final`. Commands ran with PYTHONPATH including the prepared workspace dependencies. Manually reviewed the modified CORS setup and test.
+Test results: Focused API suite — 9 passed in 0.63s. Full backend suite — 116 passed in 1.20s.
+API contract impact: None; POST /ask request and response schemas unchanged.
+Security/secret review: No keys or secret values read, changed, printed, or logged. CORS remains exact-origin and does not use wildcard origins. Configured production origins replace the local fallback.
+Known issues: No application-level rate limiting; previously documented.
+Next step: Configure CORS_ORIGINS explicitly for each deployed frontend origin.
+
+Step: Fix frontend POST /ask request contract mismatch.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `frontend/src/routes/index.tsx`, `frontend/src/components/NearbyCentresMap.tsx`, `backend/tests/test_api.py`, `working-Backend.txt`.
+Implementation summary: The frontend previously sent `{question, language, location}`; backend `AskRequest` uses `extra="forbid"` and accepts only `question` and `language`, so the extra `location` field (including null) caused the sanitized 422 response. The `/ask` payload now matches the backend schema. The existing district/taluk entry remains available to the nearby-map UI as contextual text; no location lookup or centre data is fabricated. Added a regression test proving the frontend payload validates and the old extra-field payload is rejected.
+Commands run: Backend `python -m pytest backend/tests/test_api.py -q --basetemp=work/pytest-request-contract-final` (with workspace dependency path in PYTHONPATH); frontend `npm run typecheck`; frontend `$env:VITE_GOOGLE_MAPS_API_KEY=''; npm run build`; `git diff --check` was attempted, but these project folders have no Git metadata.
+Test results: Backend API tests — 10 passed in 0.63s. Frontend typecheck — passed. Frontend production build — passed. An initial TestClient-based draft hung while issuing a valid request, so the regression was kept at the Pydantic request-contract level, matching the exact rejecting validation boundary.
+API contract impact: No backend request/response schema changes. Frontend now sends exactly the agreed `question` and `language` fields.
+Security/secret review: No `.env` files or secret values read, printed, or modified. Build was run with `VITE_GOOGLE_MAPS_API_KEY` blank in the process environment.
+Known issues: Nearby map still has no approved centre endpoint/data and shows no fabricated markers; the entered area is only displayed as context.
+Next step: Re-run the browser preflight and `/ask` interaction with the frontend and backend running together.
+
+Step: Diagnose unsupported income-certificate request.
+Date: 2026-10-30
+Status: BLOCKED
+Files changed: `backend/tests/test_intent.py`, `backend/tests/test_unsupported.py`, `working-Backend.txt`.
+Implementation summary: Source inspection found the deterministic intent matcher already recognizes “how do i apply income certificate” and “I need an income certificate in Karnataka” through its `income certificate` phrase. `income_certificate` is in the allowlisted service IDs. The request becomes `unknown` in retrieval because `backend/data/services.json` declares an empty, unverified development fixture; the retrieval fallback intentionally returns the unsupported schema when no verified matching record exists. Added regression tests for both phrasings, unrelated questions, and the empty-catalog orchestration path. No service facts or matcher behavior were fabricated or broadened; this preserves deterministic fallback and all three journey IDs.
+Commands run: `python -m pytest backend/tests/test_intent.py backend/tests/test_unsupported.py -q --basetemp=work/pytest-income-intent` with workspace dependency path in PYTHONPATH.
+Test results: 32 passed in 0.39s.
+API contract impact: None. Until a verified income-certificate record is supplied, `/ask` correctly returns `status=unsupported` with `service_id=unknown`, despite successful intent classification.
+Security/secret review: No keys, environment values, personal data, or external calls used.
+Known issues: The verified service catalog is empty, so this request cannot receive a supported guidance response without verified data. This limitation must remain until the data teammate supplies the approved record.
+Next step: Load and validate the verified `income_certificate` entry when the data teammate provides it; do not add synthetic government details.
+
+Step: Establish expandable catalogue and retrieval foundation.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/knowledge_base.py`, `backend/pipeline.py`, `backend/llm.py`, `backend/provider_matching.py`, `backend/data/services.json`, `backend/tests/test_knowledge_base.py`, `backend/tests/test_intent.py`, `backend/tests/test_retrieval.py`, `backend/tests/test_provider_matching.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Replaced the fixed ServiceRecord ID enum and retrieval gate with validated slug IDs backed by bundled catalogue entries, while retaining the three existing IDs and their deterministic intent phrases. Service records now support reviewed aliases, departments, categories, channels, task types, jurisdiction, provider types, ordered language steps, official HTTPS links, source publisher/access date provenance, and nullable verification dates. Gemini intent schema accepts the current catalogue IDs and application validation restricts output to known IDs and relevant query signals. The catalogue file has separate `services` and `discoveries` sections; only the trusted `services` section is loaded. Added ordered retrieval-provider protocols for bundled trusted data, a future reviewed cache, and a future official online adapter; only bundled data is wired. Added a maps-owned provider candidate adapter contract that requires sourced per-service authorization and filters verified capability before ranking by distance. No centre endpoint, cache, online search, or government service facts were added. README documents the intended full Karnataka service scope and current limitations. `/ask`, its schemas, CORS, and frontend integration remain unchanged.
+Commands run: `python -m pytest backend/tests -q --basetemp=work/pytest-catalog-final-3`; `python -m compileall -q backend` (PYTHONPATH included prepared workspace dependencies for pytest).
+Test results: Full backend suite — 132 passed in 1.10s. Python compile check passed.
+API contract impact: None. Existing `/ask` request and response fields remain unchanged; `service_id` remains a string and unsupported suggestions retain legacy IDs with dynamic catalogue IDs appended when present.
+Security/secret review: No environment files or secret values read or modified. No network calls made. Trusted source and official-link URLs require absolute HTTPS. Missing fees remain null/not_verified. No unreviewed discovery or generated text is promoted into trusted facts.
+Known issues: Bundled catalogue is still empty and contains no real verified service data, so recognized journeys return unsupported until the data team supplies approved records. Reviewed-cache and official online retrieval are interfaces only and are not implemented or tested. The map/centre endpoint remains maps-team owned and absent.
+Next step: Have the data teammate populate approved records with source provenance and verification dates; then implement and test the reviewed-cache adapter and official-source adapter only after their owners/contracts are agreed.
+
+Step: Add independently testable approved official-source retrieval adapter.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/official_sources.py`, `backend/pipeline.py`, `backend/tests/test_official_sources.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added a provider protocol with explicit approved-host allowlisting and a timeout passed to the provider. Candidate validation preserves title, absolute HTTPS URL, timezone-aware retrieval timestamp, jurisdiction, excerpt, and an adapter-enforced `unverified` status. Invalid provenance, unapproved hosts, provider timeout/failure, and malformed results return sanitized empty outcomes. Same-claim excerpt differences are marked as conflicts without selecting a winner. Added a trusted-first orchestration hook: a complete trusted entry prevents external retrieval; missing/incomplete information can yield unverified discoveries alongside, never instead of, the trusted entry. No provider endpoint, credentials, live API, or automatic catalogue promotion were added. `backend/data/services.json` was not modified. README states the adapter is mock-tested but no live source provider is configured.
+Commands run: `python -m pytest backend/tests/test_official_sources.py backend/tests/test_retrieval.py -q --basetemp=work/pytest-official-focus-2`; `python -m pytest backend/tests -q --basetemp=work/pytest-official-full`; `python -m compileall -q backend` (PYTHONPATH included prepared workspace dependencies for tests).
+Test results: Focused retrieval suite — 26 passed in 0.41s. Full backend suite — 149 passed in 1.77s. Compile check passed.
+API contract impact: None. `/ask`, frontend request/response schemas, CORS, and Maps integration were not changed. Discoveries remain internal retrieval results and are not converted to supported responses.
+Security/secret review: No environment files, keys, or secret values read or modified. No network requests made. Only explicit HTTPS allowlisted hosts are accepted; no full provider exceptions are returned to callers.
+Known issues: No live official-source search provider is configured or implemented. Provider implementations must honor the supplied timeout; this behavior is mocked but not verified against a live provider. Conflicts depend on the provider supplying consistent claim keys and indicate review is needed, not which source is correct.
+Next step: Agree on an official provider and its request/result format, approved-host policy, and timeout behavior with the data/integration owners; configure it only after credentials and provider terms are approved, then separately review discoveries before any catalogue promotion.
+
+Step: Add service-intent and task-type clarification layer.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/pipeline.py`, `backend/llm.py`, `backend/schemas.py`, `backend/main.py`, `backend/tests/test_clarification.py`, `backend/tests/test_intent.py`, `backend/tests/test_unsupported.py`, `backend/tests/test_final_qa.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added a separate deterministic task classifier for application procedure, document checklist, eligibility, fee, complaint filing, grievance route, and office location. Ambiguous tasks remain unknown; the isolated Gemini client can classify task type using structured enum JSON only after a request-context cue, and its output is checked against the fixed task enum. Added a Pydantic clarification response for missing service/task/locality. It uses the existing frontend fields (`status=clarification_needed`, `question`, `clarification_question`, `missing_fields`); the frontend request contract is unchanged. Office-location requests without a locality ask for district/taluk; a state-only mention is insufficient. Office-location guidance warns that no centre records or authorization are connected. Unrelated questions remain unsupported. No government facts, centre records, or verified catalogue entries were added; official-source retrieval and Maps integration remain intact.
+Commands run: Focused compatibility tests: `python -m pytest backend/tests/test_clarification.py backend/tests/test_intent.py backend/tests/test_unsupported.py backend/tests/test_api.py backend/tests/test_final_qa.py -q --basetemp=work/pytest-clarification-focus-final` — 72 passed in 1.13s. Final full suite: `python -m pytest backend/tests -q --basetemp=work/pytest-task-clarification-final`; `python -m compileall -q backend` (PYTHONPATH included prepared workspace dependencies for tests).
+Test results: Full backend suite — 163 passed in 1.76s. Compile check passed.
+API contract impact: Request unchanged. Added only a clarification response variant using fields/status already typed and rendered by the existing frontend. No frontend files changed.
+Security/secret review: No key values read, printed, or changed. No service data or prompts were logged. Tests use mocked clients and disable local Gemini configuration in clarification tests. An earlier focused run before that test isolation hit the SDK wrapper using inherited local configuration and returned its sanitized bounded-retry failure; final focused/full runs use mocked calls and passed. No output exposed environment values.
+Known issues: The frontend submits a clarification reply as a new question without a conversation token. The prompts therefore ask the user to repeat the service name; multi-turn context is not stored. Locality detection is a conservative text heuristic, not geocoding or a verified locality directory. No live Maps/centre authorization lookup exists, and the bundled catalogue remains empty.
+Next step: Add a frontend/backend turn token or client-carried context only if the team approves a contract extension; integrate a maps-owned provider capability source after its owner approves the schema; populate only teammate-reviewed verified service data.
+
+Step: Implement internal discovery review workflow.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/discovery_store.py`, `backend/official_sources.py`, `backend/pipeline.py`, `backend/tests/test_discovery_store.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added a separate JSON-backed discovery review store at `backend/data/discoveries.json`; it is created on first write and is not the trusted service catalogue. It preserves candidate title, HTTPS URL, retrieval timestamp, jurisdiction, excerpt, verification status, claim key, review state, notes, review timestamp, and conflict links. The pipeline can persist successful official-source retrieval results only when an internal caller explicitly supplies a store. Candidates start pending/unverified; duplicate candidates retain their existing review state and get refreshed retrieval timestamps; conflicting excerpts with the same claim key and jurisdiction are linked for review. Human review can verify or reject with a required note. Stale state requires an explicit caller-supplied cutoff; no arbitrary age threshold is used. A verified discovery remains only in the discovery file and is never automatically promoted to trusted service facts. `backend/data/services.json` was not modified. No public review endpoint was added.
+Commands run: Focused `python -m pytest backend/tests/test_discovery_store.py backend/tests/test_official_sources.py backend/tests/test_retrieval.py -q --basetemp=work/pytest-review-focus`; full `python -m pytest backend/tests -q --basetemp=work/pytest-discovery-review-full`; `python -m compileall -q backend` (pytest PYTHONPATH included prepared workspace dependencies).
+Test results: Focused review/retrieval suite — 44 passed in 1.03s. Full backend suite — 181 passed in 2.03s. Compile check passed.
+API contract impact: None. No frontend `/ask`, CORS, intent clarification, Maps, or service catalogue behavior changed.
+Security/secret review: No environment files or API keys read, printed, or modified. No external API calls were made. Malformed store/provider errors are sanitized; candidate URLs require absolute HTTPS. No generated text is promoted.
+Known issues: The review workflow is internal Python only and has no authentication or public API. The JSON file uses atomic replacement and a process-local lock but is not safe for concurrent multi-worker writes or ephemeral deployments without a persistent volume. Review state does not itself create a trusted service record.
+Next step: Agree on the human review owner and deployment persistence/concurrency policy; only after review should a separate approved process convert selected evidence into a fully validated service record.
+
+Step: Integrate official-source retrieval and discovery persistence into service guidance.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/pipeline.py`, `backend/main.py`, `backend/tests/test_retrieval_integration.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Wired the existing optional official-source retriever and discovery store into the existing `/ask` orchestration. Trusted catalogue data is retrieved first; the provider is skipped when stored fields cover the requested task and is called only for missing service data or a task whose trusted fields are incomplete. Successful candidates are persisted through the existing JSON discovery store, separate from `services.json`, and stay pending/unverified. Candidate text is never composed into service guidance. Supported partial answers retain trusted fields and add warnings for missing, unavailable, conflicting, or unverified additional-source results; a missing trusted record remains unsupported even if candidates are found. The app has no source provider configured by default, so tests and normal startup make no network calls. `/ask`, CORS, Maps, and clarification contracts remain unchanged. `backend/data/services.json` was not modified.
+Commands run: `python -m pytest backend/tests/test_retrieval_integration.py backend/tests/test_official_sources.py backend/tests/test_discovery_store.py -q --basetemp=work/pytest-retrieval-integration-final`; `python -m pytest backend/tests -q --basetemp=work/pytest-official-pipeline-full` (first run exposed five compatibility failures); `python -m pytest backend/tests -q --basetemp=work/pytest-official-pipeline-full-final`; `python -m pytest backend/tests -q --basetemp=work/pytest-official-pipeline-final-2`.
+Test results: Focused integration/adapter/store suite — 41 passed in 1.34s. Initial full-suite run — 182 passed, 5 failed because existing monkeypatched retrieval interfaces expected one positional argument; fixed without changing external behavior. Subsequent full backend suite, including the final warning-path adjustment — 187 passed in 2.61s.
+API contract impact: None; only existing response warning text can indicate retrieval state. No candidate schema or endpoint was added.
+Security/secret review: No secret files or values accessed. No network requests or live source provider added. Source candidates still require approved HTTPS hosts and validated provenance. Provider exceptions and persistence errors are sanitized; question content is not logged.
+Known issues: No provider is configured by default, and the current service catalogue is empty. Eligibility and office-location records are not represented by trusted schema fields, so those tasks trigger retrieval when a provider is explicitly configured, while candidates remain non-authoritative. The JSON review store retains its documented single-process concurrency limitation.
+Next step: When the data/integration owners approve an official-source provider and host allowlist, inject that adapter and exercise it in an explicitly controlled integration environment; continue to require human review before any candidate enters trusted service data.
+
+Step: Add configurable Brave official web-search provider.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/official_sources.py`, `backend/config.py`, `backend/main.py`, `backend/.env.example`, `.env.example`, `backend/tests/conftest.py`, `backend/tests/test_brave_search_provider.py`, `backend/tests/test_config.py`, `backend/tests/test_retrieval_integration.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added a standard-library HTTP adapter for Brave's documented Web Search REST endpoint. It is wired from environment settings only when provider=`brave`, backend key, and explicit approved-host allowlist are all present; missing/unsupported configuration leaves retrieval disabled. Requests use HTTPS, `country=IN`, Karnataka context, at most eight results (provider max 20), a five-second timeout, and a 1 MB response read cap; queries are bounded to the provider's documented 600-character/75-word limits. Only HTTPS results on configured hosts are retained, timestamped at retrieval, and marked unverified. Candidate discoveries continue through the existing store/review queue and never become service facts. Search uses classified service/task labels instead of forwarding the citizen's full question. Added a test-suite autouse fixture to prevent live provider calls even when local credentials are configured. No SDK/dependency was added. `backend/data/services.json`, the API contract, CORS, Maps integration, and `.env` were not modified.
+Provider choice and official sources: Brave Search API, standard Web Search endpoint `https://api.search.brave.com/res/v1/web/search`. Official docs: [API reference](https://api-dashboard.search.brave.com/api-reference/web/search/get), [pricing](https://api-dashboard.search.brave.com/documentation/pricing), [quickstart/prerequisites](https://api-dashboard.search.brave.com/documentation/quickstart), and [authentication](https://api-dashboard.search.brave.com/documentation/guides/authentication). The current Search plan is prepaid at $5 per 1,000 requests, includes $5 monthly credits, and documents 50 requests/second. Setup requires account creation, plan activation, a credit card, and a generated API key. This project did not create an account, activate a plan, require payment, or make a provider request. Limits/prices are subject to provider changes.
+Setup: The application loads repository-root `.env` without overriding process environment. Copy `.env.example` to `.env`, then locally set `OFFICIAL_SOURCE_PROVIDER=brave`, `BRAVE_SEARCH_API_KEY`, and `OFFICIAL_SOURCE_APPROVED_HOSTS` to only team-reviewed official government hostnames. The committed examples contain blank values only. An empty/missing setting disables live retrieval.
+Commands run: `python -m pytest backend/tests/test_brave_search_provider.py backend/tests/test_official_sources.py backend/tests/test_config.py backend/tests/test_retrieval_integration.py -q --basetemp=work/pytest-brave-integration`; `python -m pytest backend/tests -q --basetemp=work/pytest-brave-full`.
+Test results: Focused provider/retrieval/config suite — 41 passed in 1.18s. Full backend suite — 202 passed in 3.12s. Provider HTTP calls were mocked; the suite has an autouse guard disabling the live adapter.
+API contract impact: None. `/ask` request/response, clarification, CORS, frontend, and Maps contracts remain unchanged. Source discoveries remain internal and unverified.
+Security/secret review: No `.env` contents or real credential values accessed, printed, or changed. Only backend environment config can supply the Brave token; it is sent in the documented request header and is not included in logs/errors. No key is present in source, examples, tests, or frontend. Sensitive question-like identifiers/emails are refused by the web adapter; pipeline queries use service/task labels. Provider output is HTTPS/allowlist validated and sanitized; no live request occurred.
+Known issues: Provider account activation requires a credit card despite monthly included credits. No account/key/paid plan is configured, so production live search remains disabled. The configured allowlist must be curated by the team and search results remain discovery candidates, not proof. No HTML page fetch or claim verification is implemented. JSON review storage remains single-process only.
+Next step: After explicit team approval of account/provider use, configure a backend-only key and reviewed official-host allowlist in the deployment secret/config store; then perform a single controlled live retrieval and review returned candidates manually before any catalogue update.
+
+Step: Prepare government-service JSON bundle ingestion and quality reporting.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/data_ingestion.py`, `backend/tests/test_data_ingestion.py`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added an independent JSON bundle validator/stager for expandable service and centre records. It accepts dynamic service IDs, names/aliases, department/authority/category, jurisdiction, descriptions, ordered steps, typed document status, eligibility, fee and additional-charge details, application links/locations, service channels, centre IDs, centre capability/authentication status, provenance and verification dates. Non-core fields may be omitted. Fact wrappers distinguish absent data from `verified_unavailable` and reject unverified fee values as confirmed amounts. HTTPS is required for source, fact-reference and application-link URLs. Record validation and quality checks report rejected rows, missing important fields/provenance, stale/future dates, duplicate service IDs, possible name/alias duplicates, conflicting same-ID data, collisions with existing trusted IDs, duplicate centre IDs/name/locality, and unverified centre capability. Invalid records are identified by row and sanitized field reasons; they remain in the input bundle. Valid records are returned as in-memory staging records and every one has `import_state=pending_review`, including rows whose input claims verified. Optional staging output is a separate `pending_review_not_trusted` artifact created exclusively; existing paths cannot be overwritten. The CLI reads current `services.json` to detect ID collisions but never writes it. No changes were made to `backend/data/services.json`, `backend/data/discoveries.json`, `/ask`, frontend, or Maps behavior.
+Expected bundle format: JSON envelope `{ "schema_version": 1, "services": [...], "centres": [...] }`. See README's template. Every service needs only a slug `id` and nonblank `name`; centre needs a nonblank `name`. Optional factual fields use `{ "status": "verified" | "unverified" | "verified_unavailable", "value": ..., "note": ..., "source_urls": [...] }`. Each source can carry `title`, absolute HTTPS `url`, timezone-aware `retrieved_at`, and `publisher`. Centre service capabilities use a service ID, explicit authorization status, and source URLs.
+Commands run: `python -m pytest backend/tests/test_data_ingestion.py -q --basetemp=work/pytest-bundle-final-focus`; `python -m pytest backend/tests -q --basetemp=work/pytest-bundle-final-full`; final post-review run `python -m pytest backend/tests -q --basetemp=work/pytest-bundle-final-verification`.
+Test results: Ingestion suite — 15 passed in 1.31s. Full backend suite — 217 passed in 2.82s; final full verification after asserting both trusted and discovery files remain byte-for-byte unchanged — 217 passed in 2.76s.
+Import/validation commands: `python -m backend.data_ingestion path\to\team-bundle.json`; optional report and pending artifact: `python -m backend.data_ingestion path\to\team-bundle.json --report work\bundle-report.json --staging-output work\pending-bundle.json`. CLI loads trusted data for collision reporting only; output files must not already exist. No actual teammate bundle was available or imported.
+API contract impact: None. Runtime catalog loading, `/ask` models, CORS, clarification, Maps integration, and existing IDs/aliases are unchanged.
+Security/secret review: No `.env` or API credentials read or changed. No government service record was fabricated; tests use clearly synthetic fixtures. No network requests were made. Staged records cannot enter runtime trust automatically; source provenance/HTTPS checks and existing manual discovery review remain separate.
+Known issues: The bundle schema is version 1 and expects the field names shown in README; data teammate input using a different shape needs an explicit mapping before import. A 365-day age is a quality flag selected for this validator, not an official expiry claim. Staging is file-output only when explicitly requested, has no promotion command, and requires a human integration/review step. Possible duplicate centre matching is heuristic by identifier or normalized name plus district/taluk; it requires human review. The runtime `ServiceRecord` model is intentionally unchanged, so complete bundle records still need a deliberate mapping after approval.
+Next step: Obtain the teammate's actual JSON bundle and field mapping, run the validation command to generate a review report and separate pending stage, resolve rejected/conflicting records with source owners, and only then prepare a separately reviewed mapping into runtime catalogue format.
+
+Step: Implement explicitly approved bundle promotion into trusted runtime data.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/catalog_promotion.py`, `backend/knowledge_base.py`, `backend/tests/test_catalog_promotion.py`, `README.md`, `.gitignore`, `working-Backend.txt`.
+Implementation summary: Added a separate promotion CLI/API for schema-version-1 bundles. Input `verification_status=verified` alone is insufficient; each record requires an explicit `--approve` ID plus reviewer and note. Records with stale/future verification, unverified facts/capabilities, incomplete or mismatched source provenance, duplicate IDs/names, or conflicting values are rejected or held for review. Services map only supported verified fields into `ServiceRecord`; the full bundle record is preserved in `bundle_data`, retaining source URL/title/full retrieval timestamp, jurisdiction, optional eligibility/description/charges/locations, and verification state. Promotion review identity/note/time are stored separately. Unknown fees remain null/not_verified in runtime output while original missing vs verified-unavailable state remains in the preserved bundle. Document statuses are retained. Centres can be added under a separate top-level `centres` section only after explicit approval, verified centre record/source provenance, and verified sourced capability references to a service already in the trusted catalogue. Centre rows are never inferred as authorized from proximity. Pending discoveries are not read or promoted. Existing records and catalogue metadata/discoveries are preserved. Writes create a timestamped byte-for-byte backup and replace the catalogue atomically; identical repeats are skipped and conflicting existing IDs are never overwritten. Backup files are Git-ignored. `/ask`, CORS, frontend, and Maps code/contracts are unchanged.
+Commands run: Focused `python -m pytest backend/tests/test_catalog_promotion.py backend/tests/test_data_ingestion.py -q --basetemp=work/pytest-promotion-final-focus`; full `python -m pytest backend/tests -q --basetemp=work/pytest-promotion-full`.
+Test results: Focused promotion/ingestion suite — 24 passed in 1.57s. Full backend suite — 226 passed in 3.01s. Tests use temporary files only; actual `backend/data/services.json` and `backend/data/discoveries.json` were not promoted or modified.
+Promotion command: `python -m backend.catalog_promotion path\to\team-bundle.json --approve <reviewed-record-id> --reviewer "<reviewer>" --approval-note "<review rationale>" --report work\promotion-report.json`. Repeat `--approve` per record. The CLI reserves a new report file before attempting catalogue changes and will not overwrite it.
+API contract impact: None. Additional runtime model metadata is not included in the `SupportedResponse` fields; no routes or frontend code changed.
+Security/secret review: No `.env`, secret value, network service, or live provider accessed. Promotion accepts only a caller-supplied bundle and does not read the discovery queue. Service and centre claims require HTTPS provenance; centre service authorization is retained only with explicit verified source records. Tests use clearly synthetic records in temporary directories.
+Known issues: The CLI is an operator tool without authentication and must be run only by a trusted reviewer on a reviewed bundle. The JSON catalogue write is atomic with backup and guarded against changed input bytes, but multi-process concurrent writers are not supported. Centre records are stored separately in the catalogue but no Maps-centre endpoint consumes them yet; Maps integration ownership/contract remains separate. Facts absent from the bundle remain unknown; fields that the runtime `/ask` schema cannot directly express stay preserved in `bundle_data` and are not surfaced as newly invented response fields.
+Next step: Run bundle validation, resolve all review findings, obtain human approval per record, then run the promotion command first against a copy/staging catalogue for operator review; only then promote approved records to the configured runtime catalogue.
+
+Step: Connect verified service-centre records to Google Maps.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/centres.py`, `backend/main.py`, `backend/tests/test_centres.py`, `C:/Users/anilj/Downloads/CivicRoute_Frontend/frontend/src/components/NearbyCentresMap.tsx`, `C:/Users/anilj/Downloads/CivicRoute_Frontend/frontend/src/routes/index.tsx`, `working-Backend.txt`.
+Implementation summary: Added GET `/centres` with service ID, district, taluk, area (for the existing single “District or taluk” field), optional paired latitude/longitude, and bounded `max_results`. It reads the promoted top-level catalogue `centres` section and requires a known trusted service, centre `verification_status=verified`, a current (not future or older than 365 days) `last_verified`, dated source provenance, and a matching capability with `authorization_status=verified` and capability source URLs. District/taluk/area matches are exact and case-insensitive. Distance uses Haversine kilometres; centres lacking coordinates are omitted only when distance ordering was requested, and otherwise are returned without coordinates/distance. Malformed trusted catalogue data returns a sanitized unavailable error. Frontend map continues to load only after the existing button reveals the component, requests centres only after `/ask` returns a supported service ID, supports optional locality filtering and an explicit user-initiated browser-location request for distance, shows markers only for API centre records with coordinates, and opens source-backed centre details. Loading, empty, API error, missing-coordinate and map load states are represented. `/ask`, promotion workflow, Maps key handling and existing data files were not changed.
+Commands run: `python -m pytest backend/tests/test_centres.py backend/tests/test_api.py -q --basetemp=work/pytest-centres-focus`; final `python -m pytest backend/tests -q --basetemp=work/pytest-centres-final-2`; from the frontend project, `npm run typecheck`; `npm run build`.
+Test results: Focused route/API and centre tests — 17 passed. Full backend test suite — 233 passed in 3.14s. Frontend TypeScript typecheck — passed. Frontend production build — passed (Vite transformed 1,676 modules and completed in 18.89s). An earlier attempted run with repository `.venv` did not start because pytest is not installed there; system Python ran the successful suite. Tests used temporary synthetic fixtures only.
+API contract impact: Existing `/ask` request and response contracts are unchanged. Added GET `/centres` response `{service_id, centres:[{id,name,centre_type,address,district,taluk,latitude,longitude,service_capabilities,sources,last_verified,distance_km}]}`. Query parameters: `service_id` required; `district`, `taluk`, or `area` optional; `latitude` and `longitude` must be provided together; `max_results` defaults to 20 and is limited to 1–50. Frontend uses `area` for its existing district-or-taluk input and supplies coordinates only after the user clicks “Use my location to show distance”.
+Security/secret review: No `.env` files, API keys or secret values were read or changed. No network or Maps API requests were made during implementation/tests. Centre text is inserted into map details via DOM `textContent`; source links use `noopener noreferrer`. No centre records were added to production data. CORS and existing browser key configuration were untouched.
+Known issues: The current trusted catalogue has no promoted services or centres, so the new endpoint cannot return real results until the separate verified bundle is reviewed/promoted. No real centre data was fabricated. Date freshness follows the repository's existing 365-day data-quality threshold. Browser geolocation depends on user permission and HTTPS/localhost browser support; without it, verified centre markers still load but distance remains unavailable. Frontend was typechecked and built but no live Maps or deployed API request was made.
+Next step: Integrate the approved teammate bundle through the existing validation and explicit promotion workflow, then run the backend and frontend locally with configured CORS and the restricted Maps browser key to manually verify markers and details against real approved centre records.
+
+Step: Re-verify verified-centre discovery and Google Maps integration milestone.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/tests/test_centres.py`, `working-Backend.txt`. The endpoint and frontend integration already existed from the prior milestone and were inspected; no API, promotion, catalogue, or frontend source changes were required for this verification pass.
+Implementation summary: Confirmed the actual promoted centre schema in `BundleCentreRecord`: `provider_type` is the stored centre type (mapped to API `centre_type`); district/taluk are explicit optional fields with `jurisdiction` fallback; coordinates are an optional validated pair; capabilities use `service_id`, `authorization_status`, and HTTPS `source_urls`; source records include title, URL and timezone-aware retrieval date; `verification_status` plus `last_verified` represent the reviewed centre state. Promotion appends approved centres to the catalogue's separate top-level `centres` section and requires explicit `approved_ids` plus verified records/capabilities. The existing endpoint supports separate district/taluk parameters; the existing UI has one locality field and uses the backwards-compatible `area` query to match either exact district or taluk. Added a route-function regression check and re-ran the existing synthetic temporary-catalog tests; the real catalogue remains untouched.
+Commands run: `python -m pytest backend/tests/test_centres.py -q --basetemp=work/pytest-centre-focused-2`; `python -m pytest backend/tests -q --basetemp=work/pytest-centre-milestone-final`; from the frontend root, `npm run typecheck`; `npm run build`.
+Test results: Focused centre tests — 7 passed in 0.54s. Full backend test suite — 233 passed in 2.30s. Frontend TypeScript typecheck — passed. Frontend production build — passed; Vite transformed 1,676 modules and completed in 42.30s. An initial build attempt was blocked because the frontend root was outside the default write scope; write access was granted for that folder, and the final build passed. A temporary HTTP TestClient experiment hung in this Windows runtime and was removed; direct endpoint-function test and full backend suite both passed. Tests use temporary synthetic fixtures only.
+API contract impact: None to `/ask`. Existing `GET /centres` contract remains: `service_id`, district/taluk or UI-compatible area, optional paired coordinates, `max_results`; response contains centre name/type/address/location, coordinates, verified capabilities, sources, verification date and optional distance.
+Security/secret review: No environment files or keys were read or changed. No network calls were made. No production catalogue records or promotion code were modified. The endpoint still requires verified centre status, current verification date, titled/URL/timestamp source provenance, and verified service-specific authorization with source URLs; proximity does not grant authorization.
+Known issues: The trusted catalogue remains empty of promoted services and centres, so live map results require the data teammate's source-backed bundle and explicit human review/promotion. Frontend production build validates compilation only; live Google Maps behavior was not exercised. Existing README wording predates the current endpoint and should be corrected before deployment.
+Next step: Validate and review the teammate's real centre bundle, explicitly promote approved centres, then manually call `GET /centres` and verify displayed markers/details in local frontend against those records.
+
+Step: Fix multi-task guidance and clearly named uncatalogued service handling.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/pipeline.py`, `backend/schemas.py`, `backend/tests/test_multi_task_requests.py`, `backend/tests/test_final_qa.py`, `frontend/src/routes/index.tsx`, `README.md`, `working-Backend.txt`.
+Implementation summary: Added deterministic `classify_task_types()` to collect multiple explicit task labels, with the existing single-task Gemini classifier retained only as fallback when no deterministic task was detected. Request orchestration now checks completeness independently for every requested task, makes retrieval queries from safe service/task labels, and returns one compatible response with each trusted structured field preserved. Eligibility is read only from the promoted record's preserved bundle fact; `verified` criteria are returned only when all fact source URLs match trusted source records. Explicit `verified_unavailable` remains separately labeled, while missing/unverified/provenance-mismatched eligibility yields `not_verified` and an empty criteria list. Added an optional, additive `eligibility` response object (`status`, `criteria`, `note`) and a small frontend display; the POST `/ask` request fields are unchanged. Existing document statuses remain unchanged and fee unknown stays null/not_verified. Added conservative named-subject detection so a clear task with a named but uncatalogued subject returns unsupported; task-only questions still ask for a service, and multiple plausible known services still ask for clarification. No catalog/discovery files, Maps code, or promotion workflow were changed.
+Commands run: `python -m pytest backend/tests/test_multi_task_requests.py backend/tests/test_clarification.py backend/tests/test_response_build.py backend/tests/test_final_qa.py -q --basetemp=work/pytest-multitask-focused-2`; full `python -m pytest backend/tests -q --basetemp=work/pytest-multitask-full`; from frontend root, `npm run typecheck`; `npm run build`.
+Test results: Focused pipeline/response tests — 44 passed in 0.85s. Full backend test suite — 243 passed in 2.71s. Frontend typecheck — passed. Production build — passed; Vite transformed 1,676 modules and completed in 4.74s.
+API contract impact: `/ask` request contract unchanged. Supported response gained an additive optional `eligibility` field so verified criteria can be represented and rendered without mislabeling them as procedure steps or warnings. Existing response fields and unsupported/clarification shapes remain intact. Frontend now renders verified criteria, explicitly verified-unavailable state, or not-verified state.
+Security/secret review: Eligibility output is source-provenance checked against the approved service record; model output cannot populate it. No API credentials or environment file contents were read or modified. `services.json` and `discoveries.json` were not changed. Tests use synthetic temporary records only.
+Known issues: The trusted catalog remains empty, so real guidance is unavailable until source-backed records are reviewed/promoted. Task detection combines explicit deterministic labels; model fallback remains single-task when no labels match, so unusual multi-task paraphrases may still require clarification. No verified unavailable fee state is exposed separately by the legacy fee schema; it remains null/not_verified. No changes were made to center retrieval or deployment.
+Next step: Once reviewed service records containing provenance-linked eligibility facts are promoted, manually test combined questions through the local API and frontend. Consider an agreed typed fee-availability distinction only if product/data owners require separating verified-unavailable from not-yet-verified fees.
+
+Step: Inspect workspace for the actual government-service data bundle and prepare its intake instructions.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `working-Backend.txt` only.
+Implementation summary: Searched backend project files, `outputs/`, and `work/` while excluding environment files, dependencies, generated builds, and pytest fixtures; separately searched the accessible frontend project. No teammate-supplied JSON/CSV/Excel/archive bundle was found. The backend workspace has only existing `backend/data/services.json` and `backend/data/discoveries.json` as application data JSON; `services.json` root file is a 3-byte legacy file, not a bundle. Test-generated `bundle.json` and staging artifacts are under pytest temp directories and were explicitly excluded as synthetic. No bundle validation report/staging artifact was produced because there is no actual input. No services/discoveries files were read or changed in this pass, no records were promoted, and the API/promotion workflow/frontend/Maps were untouched.
+Expected input: JSON object `{ "schema_version": 1, "services": [...], "centres": [...] }`. Each service requires a slug `id` and nonblank `name`; optional top-level fields include aliases, department, responsible_authority, category, service_channels, authorised_service_centres, jurisdiction, sources and last_verified. Optional claim fields (description, application_procedure, documents, eligibility, fees, online_application_links and offline_application_locations) are fact objects with `status` (`verified`, `unverified`, or `verified_unavailable`), `value`, optional `note`, and `source_urls`. Procedures use ordered `{order,text}` steps; documents retain `required`, `conditional`, or `commonly_requested`; source records preserve title, absolute HTTPS URL, timezone-aware retrieved_at and optional publisher. Centre entries follow `BundleCentreRecord`, including optional provider/address/locality/coordinate data, capability entries with authorization status and source URLs, centre verification status, sources and last_verified. Optional fields can be omitted; validation reports review/rejection reasons rather than importing untrusted data.
+Commands run: Candidate file inventory via Python os.walk with generated/dependency directories excluded; `python -m backend.data_ingestion --help`; `python -m pytest backend/tests -q --basetemp=work/pytest-bundle-availability-audit`.
+Test results: Full backend suite — 243 passed in 2.76s. No validator execution against a bundle occurred because no actual bundle was available; no bundle counts or per-record review statuses can be reported.
+API contract impact: None.
+Security/secret review: No `.env`/`.env.local` contents or secret values were read or printed. No live provider/API requests were made. Production catalogue/discovery data remained unchanged.
+Known issues: Exact service/centre counts and provenance/duplicate/conflict/staleness findings are unavailable until the data team supplies the actual file. Existing `work/` contains pytest-generated fixtures and is ignored; those files are not the real bundle.
+Next step: Place the data-team file at a stable path and run `python -m backend.data_ingestion path\to\team-bundle.json --report work\bundle-report.json --staging-output work\pending-bundle.json`. Output paths must not already exist. Review the report and staged pending-only artifact with the data owners. Promotion remains a separate manual operation requiring record IDs, reviewer and approval note; do not run promotion as part of ingestion.
+
+Step: Perform CivicRoute end-to-end integration audit.
+Date: 2026-10-30
+Status: COMPLETE
+Files changed: `backend/pipeline.py`, `backend/tests/test_clarification.py`, `working-Backend.txt`.
+Implementation summary: Audited the eight requested journeys across the React request calls, FastAPI schemas/routes, service/task classification, clarification, catalogue retrieval, mocked Brave source path, response construction and verified-centre lookup. Found and fixed one deterministic task-matching gap: “where can/do I get/obtain [service] in [locality]” now routes to `office_location` just like “where is”/“nearby office.” Added regression coverage for the two common phrasings. No API contract, frontend component, Maps behavior, catalogue, or promotion code was changed. Exercised answer_request directly with the actual empty catalog and no provider to record current safe behavior. Confirmed current CORS defaults/origins and request shape in code. A source scan found only environment-variable access/config code and synthetic test credentials; no key-shaped Google credential pattern was present. `.env` and `.env.*` are ignored at both roots; environment file contents were not read.
+Commands run: `python -m pytest backend/tests -q --basetemp=work/pytest-e2e-audit`; `npm run typecheck`; `npm run build`; direct in-process `answer_request` matrix with seven fictional question strings and `official_source_retriever=None`; source-only credential-pattern scan (matched file/line locations only; values withheld).
+Test results: Full backend suite — 235 passed in 2.17s. Frontend typecheck — passed. Production build — passed; Vite transformed 1,676 modules in 3.03s. The first frontend build attempt failed because TypeScript could not write `tsconfig.tsbuildinfo` before frontend write access was granted; rerun passed after the permission grant. No live browser, Gemini, Brave, Maps, or remote API behavior was exercised.
+API contract impact: None. POST `/ask` still accepts the existing question/language fields and response models. Frontend calls `/ask` and only calls `/centres` when a response has status `ok` and a service ID. `/centres` retains service ID, district/taluk and UI-compatible `area`, optional paired coordinates, and bounded max results.
+Security/secret review: `.env` contents and frontend `.env.local` contents were not read. No key values were printed or changed. `.env`/`.env.*` ignore patterns exist in backend and frontend `.gitignore`. The Maps browser key is read only from the existing `VITE_GOOGLE_MAPS_API_KEY`; backend Gemini/Brave variables are not referenced by frontend source. Search results remain unverified candidates; fee/link facts in responses remain from trusted records. Centre route requires verified centre status, current dated provenance and service-specific verified authorization; proximity alone is not authorization.
+Known issues: The trusted `backend/data/services.json` currently has an empty services list and no centre entries. Therefore the actual direct pipeline requests for income procedure, document checklist, service location, civic grievance and official retrieval returned unsupported responses; no real guidance/markers can be verified until approved data is supplied. With the empty catalog, a combined eligibility+fees request returns `clarification_needed` with missing `task_type` because only one task type is routed per request. A clear but uncatalogued “transport permit” procedure request returns a service-name clarification rather than a definitive unsupported response; it exposes no invented facts, but the prompt is redundant when the question already names the journey. Browser loading/empty/error rendering and live API integration were inspected in source but not manually exercised. Mocked backend tests cover Brave success/empty/malformed/failure/timeout/disabled configuration, trusted data priority, unverified discovery isolation and centre authorization/location/distance. Frontend has no component-level tests for these states. Existing README still has stale pre-centres wording.
+Next step: Supply and review the actual verified catalogue/centre bundle, then manually exercise all eight journeys in a browser with the local backend and approved configuration; consider a future clarification design for multiple task intents and clearly named but uncatalogued services without changing the API contract.
